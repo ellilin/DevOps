@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  tag: latest
+
+service:
+  type: ClusterIP
+  nodePort: null
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+env:
+  RELEASE_TRACK: dev
+
+appConfig:
+  environment: dev
+  logLevel: debug
+  features:
+    visitsCounter: "true"
+    configHotReload: "true"
+
+persistence:
+  size: 100Mi
+
+vault:
+  enabled: true
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  initialDelaySeconds: 3
+  periodSeconds: 5
