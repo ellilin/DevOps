@@ -1,0 +1,100 @@
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "common.fullname" . }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "common.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- if .Values.vault.enabled }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/auth-type: "kubernetes"
+        vault.hashicorp.com/auth-path: {{ .Values.vault.authPath | quote }}
+        vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-{{ .Values.vault.injectFileName }}: {{ .Values.vault.secretPath | quote }}
+        vault.hashicorp.com/agent-inject-file-{{ .Values.vault.injectFileName }}: {{ .Values.vault.renderedFile | quote }}
+        vault.hashicorp.com/agent-inject-template-{{ .Values.vault.injectFileName }}: |
+{{ include "python-app.vaultTemplate" . | indent 10 }}
+        vault.hashicorp.com/agent-inject-command-{{ .Values.vault.injectFileName }}: {{ .Values.vault.agentInjectCommand | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "python-app.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ include "common.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.container.port }}
+          env:
+            {{- include "python-app.envVars" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "common.fullname" . }}-env
+            - secretRef:
+                name: {{ include "python-app.secretName" . }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: {{ .Values.configMount.path | quote }}
+              readOnly: true
+            - name: data-volume
+              mountPath: {{ .Values.persistence.mountPath | quote }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "common.fullname" . }}-config
+        - name: data-volume
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "common.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+  strategy:
+    {{- if eq .Values.rollout.strategy "blueGreen" }}
+    blueGreen:
+      activeService: {{ include "common.fullname" . }}
+      previewService: {{ include "common.fullname" . }}-preview
+      autoPromotionEnabled: {{ .Values.rollout.blueGreen.autoPromotionEnabled }}
+      {{- with .Values.rollout.blueGreen.autoPromotionSeconds }}
+      autoPromotionSeconds: {{ . }}
+      {{- end }}
+      {{- with .Values.rollout.blueGreen.scaleDownDelaySeconds }}
+      scaleDownDelaySeconds: {{ . }}
+      {{- end }}
+    {{- else }}
+    canary:
+      {{- with .Values.rollout.canary.maxSurge }}
+      maxSurge: {{ . }}
+      {{- end }}
+      {{- if hasKey .Values.rollout.canary "maxUnavailable" }}
+      maxUnavailable: {{ .Values.rollout.canary.maxUnavailable }}
+      {{- end }}
+      steps:
+        {{- tpl (toYaml .Values.rollout.canary.steps) . | nindent 8 }}
+    {{- end }}
+{{- end }}
